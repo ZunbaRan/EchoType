@@ -21,6 +21,7 @@ final class SnapPanel: NSPanel {
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         worksWithSpaces(AppSettings.shared.showsOnAllSpaces)
+        observeUserDrags()
     }
 
     private func worksWithSpaces(_ allSpaces: Bool) {
@@ -30,6 +31,29 @@ final class SnapPanel: NSPanel {
     }
 
     override var canBecomeKey: Bool { true }
+
+    // MARK: 用户手动拖拽后的位置记忆
+
+    private var userDragged = false
+    private var isProgrammaticMove = false
+
+    /// 用户拖拽过之后，翻译时保持用户放置的位置，不再自动贴边；关闭悬浮窗后重置。
+    private func observeUserDrags() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidMoveUser),
+            name: NSWindow.didMoveNotification, object: nil
+        )
+    }
+
+    @objc private func windowDidMoveUser() {
+        guard !isProgrammaticMove else { return }
+        userDragged = true
+    }
+
+    override func orderOut(_ sender: Any?) {
+        super.orderOut(sender)
+        userDragged = false // 关闭后重新唤出时恢复自动贴边
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc
@@ -43,11 +67,15 @@ final class SnapPanel: NSPanel {
         worksWithSpaces(AppSettings.shared.showsOnAllSpaces)
     }
 
-    /// 贴到指定输入框旁边显示。
+    /// 贴到指定输入框旁边显示；用户手动拖拽过则保持其放置的位置。
     func show(near field: FieldContext) {
-        let size = NSSize(width: Self.preferredWidth, height: max(120, frame.height))
-        let frame = SnapPositionSolver.frame(preferredSize: size, near: field.cocoaFrame, edge: AppSettings.shared.snapEdge)
-        setFrame(frame, display: true, animate: false)
+        if !userDragged {
+            let size = NSSize(width: Self.preferredWidth, height: max(120, frame.height))
+            let frame = SnapPositionSolver.frame(preferredSize: size, near: field.cocoaFrame, edge: AppSettings.shared.snapEdge)
+            isProgrammaticMove = true
+            setFrame(frame, display: true, animate: false)
+            isProgrammaticMove = false
+        }
         orderFrontRegardless()
     }
 
@@ -58,6 +86,8 @@ final class SnapPanel: NSPanel {
         var newFrame = frame
         newFrame.origin.y = frame.maxY - height
         newFrame.size.height = height
+        isProgrammaticMove = true
         setFrame(newFrame, display: true, animate: false)
+        isProgrammaticMove = false
     }
 }

@@ -141,7 +141,7 @@ final class ResultView: NSView {
     private func render(_ result: TranslationResult) {
         currentResult = result
         clearTransientViews()
-        kindLabel.stringValue = result.kindDescription
+        kindLabel.stringValue = "译文"
         translationField.font = .systemFont(ofSize: AppSettings.shared.panelFontSize, weight: .semibold)
         translationField.textColor = EchoStyle.textPrimary
         translationField.stringValue = result.translation

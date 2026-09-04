@@ -98,16 +98,9 @@ final class TranslationService {
         let system = """
         You are a professional translator helping a Chinese user write English inside the app "\(appName)".
         Translate the user's Chinese input into natural, idiomatic English that fits this context.
-        Decide whether the input is a single word, a short phrase, or a full sentence, and answer accordingly.
-        Return only valid JSON. Put the "translation" key FIRST so it streams out early:
-        {"translation":"...","alternatives":["..."],"kind":"word|phrase|sentence","phonetic":"","meaning":"","examples":[]}
-        Rules:
-        - translation: the single best English translation. Keep proper nouns. Never add explanations inside it.
-        - alternatives: up to 2 alternative English renderings with different tone or phrasing; may be [].
-        - kind: "word", "phrase", or "sentence" based on the source.
-        - phonetic: IPA of the English word when kind == "word", otherwise "".
-        - meaning: 简体中文释义/讲解（面向中国用户的简体中文说明），kind != "sentence" 时必填，句子时为 ""。
-        - examples: 1-2 short English example sentences using the word/phrase when kind != "sentence", otherwise [].
+        Return only valid JSON with a single key:
+        {"translation":"..."}
+        - translation: the natural, idiomatic English translation. Keep proper nouns. Never add explanations, notes, or extra keys.
         """
         var payload: [String: Any] = [
             "model": configuration.model,
