@@ -163,9 +163,15 @@ final class AppSettings {
         set { update(newValue, key: "pinPanel", current: pinPanel) }
     }
 
+    /// 翻译完成后自动把英文译文写入剪贴板。
+    var autoCopyTranslation: Bool {
+        get { defaults.object(forKey: "autoCopyTranslation") == nil ? true : defaults.bool(forKey: "autoCopyTranslation") }
+        set { update(newValue, key: "autoCopyTranslation", current: autoCopyTranslation) }
+    }
+
     func reset() {
         ["translationBaseURL", "translationModel", "autoTranslate", "debounceInterval",
-         "panelFontSize", "backgroundOpacity", "snapEdge", "showsOnAllSpaces", "pinPanel"].forEach(defaults.removeObject(forKey:))
+         "panelFontSize", "backgroundOpacity", "snapEdge", "showsOnAllSpaces", "pinPanel", "autoCopyTranslation"].forEach(defaults.removeObject(forKey:))
         changed()
     }
 

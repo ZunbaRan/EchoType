@@ -78,7 +78,7 @@ final class ResultView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 18, bottom: 12, right: 18)
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -87,6 +87,8 @@ final class ResultView: NSView {
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             stack.widthAnchor.constraint(equalToConstant: SnapPanel.preferredWidth - 16),
+            // 译文换行宽度 = 面板宽 - 容器左右边距(16) - 栈左右内边距(36)
+            translationField.widthAnchor.constraint(equalToConstant: SnapPanel.preferredWidth - 16 - 36),
         ])
         spinner.isHidden = true
     }
@@ -98,6 +100,11 @@ final class ResultView: NSView {
 
     func applySettings() {
         applyBackground()
+        // 与设置页的"悬浮窗常驻"共享同一状态
+        pinButton.image = NSImage(
+            systemSymbolName: AppSettings.shared.pinPanel ? "pin.fill" : "pin",
+            accessibilityDescription: "常驻"
+        )
         if let result = currentResult { render(result) }
     }
 
@@ -190,6 +197,12 @@ final class ResultView: NSView {
             systemSymbolName: AppSettings.shared.pinPanel ? "pin.fill" : "pin",
             accessibilityDescription: "常驻"
         )
+    }
+
+    /// 翻译完成后自动复制成功的提示。
+    func showAutoCopied() {
+        statusLabel.textColor = .systemGreen
+        statusLabel.stringValue = "已自动复制到剪贴板"
     }
 
     /// 流式输出：实时刷新译文（尚未完成时禁用复制）。

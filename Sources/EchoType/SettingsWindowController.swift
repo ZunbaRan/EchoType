@@ -35,6 +35,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private var modelField: NSTextField?
     private var keyField: NSSecureTextField?
     private var connectionLabel: NSTextField?
+    private var pinCheckbox: NSButton?
+    private var autoCopyCheckbox: NSButton?
 
     init() {
         let window = NSWindow(
@@ -50,6 +52,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         window.delegate = self
         buildInterface()
         showTab(.translation)
+
+        // 悬浮窗 Pin 按钮与设置开关共享同一状态，变化时同步刷新
+        NotificationCenter.default.addObserver(forName: .echoSettingsChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.pinCheckbox?.state = AppSettings.shared.pinPanel ? .on : .off
+            self?.autoCopyCheckbox?.state = AppSettings.shared.autoCopyTranslation ? .on : .off
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -223,12 +231,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let stack = NSStackView(views: [debounce, debounceLabel])
         stack.orientation = .horizontal
         stack.spacing = 8
+        let autoCopy = NSButton(checkboxWithTitle: "翻译完成后自动复制到剪贴板", target: self, action: #selector(autoCopyChanged(_:)))
+        autoCopy.state = settings.autoCopyTranslation ? .on : .off
+        autoCopyCheckbox = autoCopy
         return form([
             row("自动翻译", detail: "关闭后仍可用快捷键 ⌃⌥T 手动触发", control: auto),
+            row("自动复制", detail: "译文生成后立即写入剪贴板，直接粘贴即可", control: autoCopy),
             row("输入停顿阈值", detail: "停止打字多久后触发翻译", control: stack),
             row("手动翻译快捷键", detail: "在任意应用内立即翻译当前输入", control: EchoStyle.label("⌃⌥T", size: 12)),
             note("翻译只针对输入框最后一行（过长时截取最后一个句子片段），控制延迟与 API 成本。"),
         ])
+    }
+
+    @objc private func autoCopyChanged(_ sender: NSButton) {
+        settings.autoCopyTranslation = sender.state == .on
     }
 
     private var debounceStack: (slider: NSSlider, label: NSTextField)?
@@ -259,6 +275,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         spaces.state = settings.showsOnAllSpaces ? .on : .off
         let pin = NSButton(checkboxWithTitle: "悬浮窗常驻", target: self, action: #selector(pinPanelChanged(_:)))
         pin.state = settings.pinPanel ? .on : .off
+        pinCheckbox = pin
         return form([
             row("译文字号", control: font),
             row("背景不透明度", detail: "最左为完全透明", control: opacity),

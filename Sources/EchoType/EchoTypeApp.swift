@@ -6,7 +6,8 @@ enum EchoTypeApplication {
 
     static func main() {
         let application = NSApplication.shared
-        application.setActivationPolicy(.regular)
+        // 菜单栏常驻应用：不占用 Dock，通过屏幕右上角状态栏图标交互
+        application.setActivationPolicy(.accessory)
         application.delegate = delegate
         application.run()
     }
@@ -16,14 +17,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let coordinator = TranslationCoordinator()
     private var settingsWindowController: SettingsWindowController?
     private var statusWindowController: StatusWindowController?
+    private var statusItem: NSStatusItem?
     private var observers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
-        buildMenu()
 
         statusWindowController = StatusWindowController()
         settingsWindowController = SettingsWindowController()
+        setupStatusItem()
 
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: .echoOpenSettings, object: nil, queue: .main) { [weak self] _ in
@@ -37,6 +39,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusWindowController?.showWindow(nil)
         statusWindowController?.window?.center()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func setupStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.image = NSImage(systemSymbolName: "character.bubble.fill", accessibilityDescription: "EchoType")
+        item.button?.toolTip = "EchoType — 输入框旁的 AI 翻译"
+
+        let menu = NSMenu()
+        let status = NSMenuItem(title: "状态窗口", action: #selector(showStatusWindow), keyEquivalent: "")
+        status.target = self
+        menu.addItem(status)
+        let settings = NSMenuItem(title: "设置…", action: #selector(showSettingsMenu), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+        menu.addItem(NSMenuItem.separator())
+        let translate = NSMenuItem(title: "翻译当前输入（⌃⌥T）", action: #selector(translateNow), keyEquivalent: "")
+        translate.target = self
+        menu.addItem(translate)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "退出 EchoType", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        item.menu = menu
+        statusItem = item
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -91,6 +115,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSettings()
     }
 
+    @objc private func showStatusWindow() {
+        statusWindowController?.showWindow(nil)
+        statusWindowController?.refreshPermissionStatus()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func translateNow() {
+        GlobalHotKey.handler?()
+    }
+
     private func showSettings() {
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
@@ -113,10 +147,8 @@ final class TranslationCoordinator {
     func start() {
         resultView.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = resultView
-        resultView.onCopy = { text in
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
+        resultView.onCopy = { [weak self] text in
+            self?.copyToPasteboard(text)
         }
 
         monitor.onFieldChanged = { [weak self] field in
@@ -192,5 +224,15 @@ final class TranslationCoordinator {
         resultView.show(result)
         panel.show(near: field)
         panel.resizeToFitContent()
+        if AppSettings.shared.autoCopyTranslation {
+            copyToPasteboard(result.translation)
+            resultView.showAutoCopied()
+        }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 }
