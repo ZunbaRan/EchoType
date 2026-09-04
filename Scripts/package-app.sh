@@ -34,5 +34,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 cp "$BIN" "$APP/Contents/MacOS/EchoType"
-codesign --force --sign - "$APP"
+# 固定 bundle id + 指定需求（DR），让 TCC 辅助功能授权在重新构建后依然有效
+codesign --force --sign - --identifier com.echotype.app \
+    --requirements '=designated => identifier "com.echotype.app"' "$APP"
 echo "打包完成：$APP"

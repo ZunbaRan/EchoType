@@ -157,9 +157,15 @@ final class AppSettings {
         set { update(newValue, key: "showsOnAllSpaces", current: showsOnAllSpaces) }
     }
 
+    /// 常驻：显示后不随焦点离开输入框而自动隐藏（Esc 或手动关闭）。
+    var pinPanel: Bool {
+        get { defaults.object(forKey: "pinPanel") == nil ? true : defaults.bool(forKey: "pinPanel") }
+        set { update(newValue, key: "pinPanel", current: pinPanel) }
+    }
+
     func reset() {
         ["translationBaseURL", "translationModel", "autoTranslate", "debounceInterval",
-         "panelFontSize", "backgroundOpacity", "snapEdge", "showsOnAllSpaces"].forEach(defaults.removeObject(forKey:))
+         "panelFontSize", "backgroundOpacity", "snapEdge", "showsOnAllSpaces", "pinPanel"].forEach(defaults.removeObject(forKey:))
         changed()
     }
 

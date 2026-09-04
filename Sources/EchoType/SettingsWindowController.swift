@@ -257,12 +257,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         edge.action = #selector(edgeChanged(_:))
         let spaces = NSButton(checkboxWithTitle: "在所有桌面空间显示", target: self, action: #selector(spacesChanged(_:)))
         spaces.state = settings.showsOnAllSpaces ? .on : .off
+        let pin = NSButton(checkboxWithTitle: "悬浮窗常驻", target: self, action: #selector(pinPanelChanged(_:)))
+        pin.state = settings.pinPanel ? .on : .off
         return form([
             row("译文字号", control: font),
             row("背景不透明度", detail: "最左为完全透明", control: opacity),
             row("默认贴边位置", detail: "空间不足时会自动翻转", control: edge),
             row("跨桌面显示", control: spaces),
-            note("悬浮窗可拖动；按 Esc 关闭；点击复制只会复制英文译文。"),
+            row("悬浮窗常驻", detail: "关闭后焦点离开输入框即隐藏", control: pin),
+            note("悬浮窗可拖动；按 Esc 关闭；译文流式实时显示；点击复制只会复制英文译文。"),
         ])
     }
 
@@ -270,6 +273,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     @objc private func opacityChanged(_ sender: NSSlider) { settings.backgroundOpacity = sender.doubleValue }
     @objc private func edgeChanged(_ sender: NSPopUpButton) { settings.snapEdge = SnapEdge(rawValue: sender.indexOfSelectedItem) ?? .below }
     @objc private func spacesChanged(_ sender: NSButton) { settings.showsOnAllSpaces = sender.state == .on }
+    @objc private func pinPanelChanged(_ sender: NSButton) { settings.pinPanel = sender.state == .on }
 
     // MARK: - 数据与隐私
 

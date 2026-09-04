@@ -65,6 +65,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "退出 EchoType", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+
         let windowItem = NSMenuItem()
         main.addItem(windowItem)
         let windowMenu = NSMenu(title: "窗口")
@@ -134,7 +146,10 @@ final class TranslationCoordinator {
         currentField = field
         if field == nil {
             trigger.cancel()
-            panel.orderOut(nil)
+            // 常驻模式下不隐藏，Esc 或面板上的 Pin 按钮负责关闭
+            if !AppSettings.shared.pinPanel {
+                panel.orderOut(nil)
+            }
         }
     }
 
@@ -151,12 +166,15 @@ final class TranslationCoordinator {
         resultView.setLoading(text)
         panel.show(near: field)
 
-        service.translate(
+        service.streamTranslate(
             text: text,
             appName: field.appName,
-            configuration: AppSettings.shared.translationConfiguration
-        ) { [weak self] result in
-            DispatchQueue.main.async {
+            configuration: AppSettings.shared.translationConfiguration,
+            onDelta: { [weak self] partial in
+                guard let self, generation == self.requestGeneration else { return }
+                self.resultView.updatePartial(partial)
+            },
+            completion: { [weak self] result in
                 guard let self, generation == self.requestGeneration else { return } // 已过期：用户继续输入
                 switch result {
                 case .success(let translated):
@@ -167,7 +185,7 @@ final class TranslationCoordinator {
                     self.panel.resizeToFitContent()
                 }
             }
-        }
+        )
     }
 
     private func present(_ result: TranslationResult, field: FieldContext) {

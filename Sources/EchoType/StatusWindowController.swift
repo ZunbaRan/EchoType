@@ -17,6 +17,8 @@ final class StatusWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         buildInterface()
+        refreshPermissionStatus()
+        startAutoRefresh()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -66,6 +68,18 @@ final class StatusWindowController: NSWindowController, NSWindowDelegate {
     func refreshPermissionStatus() {
         permissionLabel.stringValue = Self.permissionText()
         permissionLabel.textColor = Self.permissionColor()
+    }
+
+    /// 周期刷新：用户在系统设置里授权后，窗口状态自动变为已授权。
+    private var refreshTimer: Timer?
+
+    func startAutoRefresh() {
+        guard refreshTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.refreshPermissionStatus()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        refreshTimer = timer
     }
 
     func windowDidBecomeKey(_ notification: Notification) {

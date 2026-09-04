@@ -31,6 +31,7 @@ final class ResultView: NSView {
     }()
 
     private var copyButton: NSButton!
+    private var pinButton: NSButton!
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -60,7 +61,12 @@ final class ResultView: NSView {
         glossStack.alignment = .leading
         glossStack.spacing = 4
 
-        let header = NSStackView(views: [kindLabel, NSView(), spinner])
+        pinButton = EchoStyle.iconButton("pin.fill", help: "常驻：失去焦点时不自动隐藏", target: self, action: #selector(togglePin))
+        if !AppSettings.shared.pinPanel {
+            pinButton.image = NSImage(systemSymbolName: "pin", accessibilityDescription: "常驻")
+        }
+
+        let header = NSStackView(views: [kindLabel, pinButton, NSView(), spinner])
         header.orientation = .horizontal
         header.alignment = .centerY
 
@@ -176,6 +182,24 @@ final class ResultView: NSView {
         view.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
         view.widthAnchor.constraint(equalToConstant: SnapPanel.preferredWidth - 44).isActive = true
         return view
+    }
+
+    @objc private func togglePin() {
+        AppSettings.shared.pinPanel.toggle()
+        pinButton.image = NSImage(
+            systemSymbolName: AppSettings.shared.pinPanel ? "pin.fill" : "pin",
+            accessibilityDescription: "常驻"
+        )
+    }
+
+    /// 流式输出：实时刷新译文（尚未完成时禁用复制）。
+    func updatePartial(_ partial: String) {
+        guard currentResult == nil else { return }
+        translationField.textColor = EchoStyle.textPrimary
+        translationField.stringValue = partial
+        copyButton.isEnabled = false
+        statusLabel.stringValue = "生成中…"
+        statusLabel.textColor = EchoStyle.textTertiary
     }
 
     @objc private func copyTranslation() {
