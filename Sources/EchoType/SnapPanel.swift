@@ -63,6 +63,12 @@ final class SnapPanel: NSPanel {
         }
     }
 
+    /// 标准 Esc 响应链方法：点击面板上的按钮后，Esc 可能被控件优先消费，
+    /// 这里兜底确保键窗口状态下按 Esc 一定关闭悬浮窗。
+    override func cancelOperation(_ sender: Any?) {
+        orderOut(nil)
+    }
+
     func applySettings() {
         worksWithSpaces(AppSettings.shared.showsOnAllSpaces)
     }

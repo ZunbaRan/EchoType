@@ -178,11 +178,17 @@ final class TranslationCoordinator {
         currentField = field
         if field == nil {
             trigger.cancel()
-            // 常驻模式下不隐藏，Esc 或面板上的 Pin 按钮负责关闭
-            if !AppSettings.shared.pinPanel {
+            // 常驻模式下不隐藏；非常驻时，用户正在与悬浮窗交互（面板为键窗口或鼠标悬停其上）也不隐藏
+            if !AppSettings.shared.pinPanel && !isUserInteractingWithPanel {
                 panel.orderOut(nil)
             }
         }
+    }
+
+    private var isUserInteractingWithPanel: Bool {
+        guard panel.isVisible else { return false }
+        if panel.isKeyWindow { return true }
+        return NSMouseInRect(NSEvent.mouseLocation, panel.frame, false)
     }
 
     private func translate(_ text: String, field: FieldContext) {

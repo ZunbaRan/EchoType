@@ -14,6 +14,7 @@ final class FocusMonitor {
     private var timer: Timer?
     private var currentField: FieldContext?
     private var lastValue: String = ""
+    private var pendingLoseCount = 0
     private(set) var isRunning = false
 
     func start() {
@@ -42,7 +43,7 @@ final class FocusMonitor {
     private func poll() {
         guard isRunning, AXIsProcessTrusted() else { return }
         guard let app = NSWorkspace.shared.frontmostApplication else {
-            loseField()
+            confirmFieldLoss()
             return
         }
         // 忽略自身（设置窗口、状态窗口中获得焦点时不干扰悬浮窗）。
@@ -54,15 +55,17 @@ final class FocusMonitor {
             appElement, kAXFocusedUIElementAttribute as CFString, &raw
         )
         guard result == .success, let focused = raw, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
-            loseField()
+            confirmFieldLoss()
             return
         }
         let axElement = focused as! AXUIElement
-        guard let field = FieldContext(element: axElement, appName: app.localizedName ?? "") ,
+        guard let field = FieldContext(element: axElement, appName: app.localizedName ?? ""),
               field.isTextInput else {
-            loseField()
+            confirmFieldLoss()
             return
         }
+
+        pendingLoseCount = 0
 
         if let existing = currentField, existing.role == field.role,
            existing.frameTopLeft == field.frameTopLeft {
@@ -80,6 +83,16 @@ final class FocusMonitor {
         onFieldChanged?(field)
         if field.containsCJK {
             onTextChanged?(field)
+        }
+    }
+
+    /// 焦点丢失需连续两次轮询（约 0.8 秒）确认才上报，过滤点击悬浮窗等瞬态失焦。
+    private func confirmFieldLoss() {
+        guard currentField != nil else { return }
+        pendingLoseCount += 1
+        if pendingLoseCount >= 2 {
+            pendingLoseCount = 0
+            loseField()
         }
     }
 
