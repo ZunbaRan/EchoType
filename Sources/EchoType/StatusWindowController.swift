@@ -39,7 +39,7 @@ final class StatusWindowController: NSWindowController, NSWindowDelegate {
         buttons.spacing = 10
 
         let usage = EchoStyle.label(
-            "把焦点放到任意应用的输入框，用中文输入；停顿后悬浮窗会自动贴在输入框旁显示英文翻译、备选译法与词/短语解释。\n⌃⌥T 立即翻译 · Esc 关闭悬浮窗 · 点击「复制英文」只复制英文译文。",
+            "把焦点放到任意应用的输入框，用中文输入；停顿后悬浮窗会自动贴在输入框旁显示英文翻译。\n⌃⌥T 立即翻译 · Esc 关闭悬浮窗 · 点击「复制英文」只复制英文译文。",
             size: 11, color: EchoStyle.textTertiary, lines: 5
         )
 

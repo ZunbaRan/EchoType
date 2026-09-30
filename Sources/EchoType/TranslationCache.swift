@@ -21,9 +21,14 @@ final class TranslationCache {
         load()
     }
 
-    private func key(for source: String, model: String) -> String {
+    /// 缓存键：SHA256("模型\n原文")，小写 hex。
+    static func cacheKey(source: String, model: String) -> String {
         let digest = SHA256.hash(data: Data("\(model)\n\(source)".utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func key(for source: String, model: String) -> String {
+        Self.cacheKey(source: source, model: model)
     }
 
     func get(source: String, model: String) -> TranslationResult? {

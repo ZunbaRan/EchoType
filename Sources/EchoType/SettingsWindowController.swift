@@ -302,7 +302,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             row("翻译缓存", detail: "按原文与模型缓存，避免重复请求", control: clearCache),
             row("缓存条数", control: countLabel),
             row("恢复默认设置", control: reset),
-            note("EchoType 需要辅助功能权限读取任意应用中的输入框内容，该内容仅用于生成翻译，只发送给你配置的翻译服务，不会经过任何其他服务器。API Key 以明文保存在 Application Support/EchoType/credentials.json，与缓存在同一文件夹，请勿分享。"),
+            note("EchoType 需要辅助功能权限读取任意应用中的输入框内容，该内容仅用于生成翻译，只发送给你配置的翻译服务，不会经过任何其他服务器。密码等安全输入框会被排除，不会被读取或翻译。API Key 以明文保存在 Application Support/EchoType/credentials.json，与缓存在同一文件夹，请勿分享。"),
         ])
     }
 

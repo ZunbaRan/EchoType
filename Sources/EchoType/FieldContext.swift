@@ -11,52 +11,25 @@ struct FieldContext {
     let frameTopLeft: CGRect
     let appName: String
 
-    private static let inputRoles: Set<String> = [
-        kAXTextFieldRole,     // "AXTextField"
-        kAXTextAreaRole,      // "AXTextArea"
-        kAXComboBoxRole,      // "AXComboBox"
-        "AXTextView",
-    ]
-
     var isTextInput: Bool {
-        if Self.inputRoles.contains(role) { return true }
-        if subrole == kAXSearchFieldSubrole { return true }
-        return false
+        InputRoleGate.isTextInput(role: role, subrole: subrole)
     }
 
     var cocoaFrame: CGRect {
-        let maxY = NSScreen.screens.map(\.frame.maxY).max() ?? frameTopLeft.maxY
-        return NSRect(
-            x: frameTopLeft.minX,
-            y: maxY - frameTopLeft.maxY,
-            width: frameTopLeft.width,
-            height: frameTopLeft.height
-        )
+        // AX 全局坐标以主显示器（frame 原点为 .zero）左上角为原点，需按其高度翻转 Y 轴。
+        let primaryMaxY = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first)?.frame.maxY
+            ?? frameTopLeft.maxY
+        return ScreenCoordinates.cocoaFrame(fromTopLeft: frameTopLeft, primaryScreenMaxY: primaryMaxY)
     }
 
     /// 是否包含中文字符（基本区 + 扩展 A 区）。
     var containsCJK: Bool {
-        value.unicodeScalars.contains { scalar in
-            (0x4E00...0x9FFF).contains(scalar.value) || (0x3400...0x4DBF).contains(scalar.value)
-        }
+        InputSegmenter.containsCJK(value)
     }
 
     /// 取最后一行输入；若该行过长则只取最后一个句子片段，控制翻译成本与延迟。
     var lastInputSegment: String? {
-        let lines = value
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard var line = lines.last, !line.isEmpty else { return nil }
-        if line.count > 160 {
-            let sentenceSeparators: Set<Character> = ["。", "！", "？", "；", "，", ".", "!", "?", ";", ","]
-            if let index = line.lastIndex(where: { sentenceSeparators.contains($0) }),
-               index < line.endIndex {
-                let tail = line[line.index(after: index)...].trimmingCharacters(in: .whitespaces)
-                if !tail.isEmpty { line = String(tail) }
-            }
-        }
-        return line
+        InputSegmenter.lastSegment(of: value)
     }
 
     init?(element: AXUIElement, appName: String) {
@@ -93,5 +66,63 @@ struct FieldContext {
               let value = raw else { return nil }
         guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         return unsafeBitCast(value, to: AXValue.self)
+    }
+}
+
+/// 聚焦元素是否属于"用户可以输入的地方"（纯逻辑，便于测试）。
+enum InputRoleGate {
+    private static let inputRoles: Set<String> = [
+        kAXTextFieldRole,     // "AXTextField"
+        kAXTextAreaRole,      // "AXTextArea"
+        kAXComboBoxRole,      // "AXComboBox"
+        "AXTextView",
+    ]
+
+    static func isTextInput(role: String, subrole: String) -> Bool {
+        // 密码等安全输入框：显式排除，不读取、不翻译。
+        if subrole == kAXSecureTextFieldSubrole { return false }
+        if inputRoles.contains(role) { return true }
+        if subrole == kAXSearchFieldSubrole { return true }
+        return false
+    }
+}
+
+/// 输入文本的分段与字符集判断（纯逻辑，便于测试）。
+enum InputSegmenter {
+    /// 是否包含中文字符（基本区 + 扩展 A 区）。
+    static func containsCJK(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            (0x4E00...0x9FFF).contains(scalar.value) || (0x3400...0x4DBF).contains(scalar.value)
+        }
+    }
+
+    /// 取最后一行输入；若该行过长则只取最后一个句子片段，控制翻译成本与延迟。
+    static func lastSegment(of text: String) -> String? {
+        let lines = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard var line = lines.last, !line.isEmpty else { return nil }
+        if line.count > 160 {
+            let sentenceSeparators: Set<Character> = ["。", "！", "？", "；", "，", ".", "!", "?", ";", ","]
+            if let index = line.lastIndex(where: { sentenceSeparators.contains($0) }),
+               index < line.endIndex {
+                let tail = line[line.index(after: index)...].trimmingCharacters(in: .whitespaces)
+                if !tail.isEmpty { line = String(tail) }
+            }
+        }
+        return line
+    }
+}
+
+enum ScreenCoordinates {
+    /// AX 全局坐标（原点在主显示器左上角）→ Cocoa 全局坐标（原点在主显示器左下角）。
+    static func cocoaFrame(fromTopLeft rect: CGRect, primaryScreenMaxY: CGFloat) -> CGRect {
+        NSRect(
+            x: rect.minX,
+            y: primaryScreenMaxY - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
     }
 }

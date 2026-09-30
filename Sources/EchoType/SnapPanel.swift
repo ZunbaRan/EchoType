@@ -18,6 +18,11 @@ final class SnapPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
+        // 全局强制 darkAqua 是为设置/状态窗口的深色设计；
+        // 玻璃悬浮窗改用浅色外观，Liquid Glass 才呈亮色，语义文字色随 vibrancy 适配背景。
+        if ResultView.usesLiquidGlass {
+            appearance = NSAppearance(named: .aqua)
+        }
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         worksWithSpaces(AppSettings.shared.showsOnAllSpaces)
@@ -30,7 +35,34 @@ final class SnapPanel: NSPanel {
             : [.fullScreenAuxiliary]
     }
 
-    override var canBecomeKey: Bool { true }
+    // 永不成为 key window：液态渲染由 _hasActiveAppearance 覆盖提供（见下），
+    // 不需要真实窗口身份；面板不抢前台应用的键盘输入。
+    override var canBecomeKey: Bool { false }
+
+    /// 液态玻璃把「活跃渲染」挂在窗口的私有查询 _hasActiveAppearance 上，
+    /// 而不是公开的 isKeyWindow/isMainWindow（实验证明改后者无效）。
+    /// 这里覆盖为 true：玻璃在非 key 悬浮窗里也呈现液态——
+    /// 这只是渲染提示，不改变窗口真实状态，所以不会接管键盘。
+    /// 若未来 macOS 移除/改名该方法，此覆盖自然失效、回退磨砂态，不崩溃。
+    @objc(_hasActiveAppearance)
+    private func echotype_hasActiveAppearance() -> Bool {
+        if ResultView.usesLiquidGlass { return true }
+        return Self.realActiveAppearance(self, NSSelectorFromString("_hasActiveAppearance"))
+    }
+
+    /// 同一机制的忽略键盘焦点变体（菜单/检查器等路径会查它），一并覆盖。
+    @objc(_hasActiveAppearanceIgnoringKeyFocus)
+    private func echotype_hasActiveAppearanceIgnoringKeyFocus() -> Bool {
+        if ResultView.usesLiquidGlass { return true }
+        return Self.realActiveAppearance(self, NSSelectorFromString("_hasActiveAppearanceIgnoringKeyFocus"))
+    }
+
+    /// 调用 NSWindow 上同名私有方法的真实实现（非玻璃路径保持原行为）。
+    private static func realActiveAppearance(_ obj: AnyObject, _ sel: Selector) -> Bool {
+        typealias Fn = @convention(c) (AnyObject, Selector) -> Bool
+        guard let imp = class_getMethodImplementation(NSWindow.self, sel) else { return false }
+        return unsafeBitCast(imp, to: Fn.self)(obj, sel)
+    }
 
     // MARK: 用户手动拖拽后的位置记忆
 
@@ -41,7 +73,7 @@ final class SnapPanel: NSPanel {
     private func observeUserDrags() {
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowDidMoveUser),
-            name: NSWindow.didMoveNotification, object: nil
+            name: NSWindow.didMoveNotification, object: self
         )
     }
 
@@ -55,19 +87,8 @@ final class SnapPanel: NSPanel {
         userDragged = false // 关闭后重新唤出时恢复自动贴边
     }
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // Esc
-            orderOut(nil)
-        } else {
-            super.keyDown(with: event)
-        }
-    }
-
-    /// 标准 Esc 响应链方法：点击面板上的按钮后，Esc 可能被控件优先消费，
-    /// 这里兜底确保键窗口状态下按 Esc 一定关闭悬浮窗。
-    override func cancelOperation(_ sender: Any?) {
-        orderOut(nil)
-    }
+    // 面板 canBecomeKey=false，永远不进响应链：Esc 由
+    /// EchoTypeApp 的全局键盘监听关闭（TranslationCoordinator.installGlobalEscapeMonitor）。
 
     func applySettings() {
         worksWithSpaces(AppSettings.shared.showsOnAllSpaces)

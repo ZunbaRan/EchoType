@@ -75,42 +75,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    private func buildMenu() {
-        let main = NSMenu()
-        let appItem = NSMenuItem()
-        main.addItem(appItem)
-        let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于 EchoType", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
-        appMenu.addItem(NSMenuItem.separator())
-        let settings = NSMenuItem(title: "设置…", action: #selector(showSettingsMenu), keyEquivalent: ",")
-        settings.target = self
-        appMenu.addItem(settings)
-        appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "退出 EchoType", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        appItem.submenu = appMenu
-
-        let editItem = NSMenuItem()
-        main.addItem(editItem)
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
-        editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        editItem.submenu = editMenu
-
-        let windowItem = NSMenuItem()
-        main.addItem(windowItem)
-        let windowMenu = NSMenu(title: "窗口")
-        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "关闭", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowItem.submenu = windowMenu
-
-        NSApp.mainMenu = main
-    }
-
     @objc private func showSettingsMenu() {
         showSettings()
     }
@@ -172,6 +136,16 @@ final class TranslationCoordinator {
             self?.panel.applySettings()
             self?.resultView.applySettings()
         }
+
+        // 玻璃路径下面板不为 key（液态渲染只占用 main 身份），keyDown 收不到 Esc；
+        // 用全局监听兜底——本应用持有辅助功能权限，全局监听正需要它。
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return } // Esc
+            DispatchQueue.main.async {
+                guard let self, self.panel.isVisible else { return }
+                self.panel.orderOut(nil)
+            }
+        }
     }
 
     private func handleFieldChange(_ field: FieldContext?) {
@@ -186,8 +160,8 @@ final class TranslationCoordinator {
     }
 
     private var isUserInteractingWithPanel: Bool {
+        // 面板 canBecomeKey=false，只用鼠标悬停判断用户是否正在操作面板
         guard panel.isVisible else { return false }
-        if panel.isKeyWindow { return true }
         return NSMouseInRect(NSEvent.mouseLocation, panel.frame, false)
     }
 

@@ -39,9 +39,3 @@ struct TranslationResult: Codable, Equatable {
         examples = try container.decodeIfPresent([String].self, forKey: .examples) ?? []
     }
 }
-
-extension TranslationResult {
-    init(translation: String) {
-        self.init(translation: translation, alternatives: [], kind: "", phonetic: "", meaning: "", examples: [])
-    }
-}

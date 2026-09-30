@@ -24,7 +24,7 @@ final class FocusMonitor {
         let pollTimer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in self?.poll() }
         RunLoop.main.add(pollTimer, forMode: .common)
         timer = pollTimer
-        NotificationCenter.default.addObserver(
+        NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(frontmostAppChanged),
             name: NSWorkspace.didActivateApplicationNotification, object: nil
         )
@@ -33,6 +33,9 @@ final class FocusMonitor {
     func stop() {
         timer?.invalidate()
         timer = nil
+        NSWorkspace.shared.notificationCenter.removeObserver(
+            self, name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
         isRunning = false
     }
 
@@ -50,6 +53,8 @@ final class FocusMonitor {
         if app.bundleIdentifier == Bundle.main.bundleIdentifier { return }
 
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        // 限制同步 AX IPC 的等待时间，避免目标应用卡死时拖住主线程。
+        AXUIElementSetMessagingTimeout(appElement, 0.25)
         var raw: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(
             appElement, kAXFocusedUIElementAttribute as CFString, &raw

@@ -6,7 +6,13 @@ cd "$(dirname "$0")/.."
 CONFIG="release"
 if [ "${1:-release}" = "debug" ]; then CONFIG="debug"; fi
 
-swift build -c "$CONFIG"
+# Liquid Glass 由链接时记录的 SDK 版本门控：LC_BUILD_VERSION 的 sdk 字段可能写成
+# 部署目标（13.0），macOS 会因此把 NSGlassEffectView 降级为普通视图。
+# 这里保持 minos=13.0（与 Package.swift 的 platforms: [.macOS(.v13)] 一致，两者要同步改），
+# 但如实声明实际编译所用的 SDK 版本。
+SDK_VERSION="$(xcrun --show-sdk-version)"
+swift build -c "$CONFIG" \
+    -Xlinker -platform_version -Xlinker macos -Xlinker 13.0 -Xlinker "$SDK_VERSION"
 
 APP="dist/EchoType.app"
 BIN=".build/$CONFIG/EchoType"
@@ -22,8 +28,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>EchoType</string>
     <key>CFBundleDisplayName</key><string>EchoType</string>
     <key>CFBundleIdentifier</key><string>com.echotype.app</string>
-    <key>CFBundleVersion</key><string>0.2.1</string>
-    <key>CFBundleShortVersionString</key><string>0.2.1</string>
+    <key>CFBundleVersion</key><string>0.3.0</string>
+    <key>CFBundleShortVersionString</key><string>0.3.0</string>
     <key>CFBundleExecutable</key><string>EchoType</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>

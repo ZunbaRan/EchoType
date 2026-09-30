@@ -15,6 +15,11 @@ let package = Package(
                 .linkedFramework("AppKit"),
             ]
         ),
+        .testTarget(
+            name: "EchoTypeTests",
+            dependencies: ["EchoType"],
+            path: "Tests/EchoTypeTests"
+        ),
     ],
     swiftLanguageModes: [.v5]
 )
