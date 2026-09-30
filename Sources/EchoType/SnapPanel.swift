@@ -68,6 +68,7 @@ final class SnapPanel: NSPanel {
 
     private var userDragged = false
     private var isProgrammaticMove = false
+    private var backdropAdaptItem: DispatchWorkItem?
 
     /// 用户拖拽过之后，翻译时保持用户放置的位置，不再自动贴边；关闭悬浮窗后重置。
     private func observeUserDrags() {
@@ -80,6 +81,25 @@ final class SnapPanel: NSPanel {
     @objc private func windowDidMoveUser() {
         guard !isProgrammaticMove else { return }
         userDragged = true
+        // 拖到新背景上后重新判定明暗（防抖，拖动中不连续截图）。
+        backdropAdaptItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.adaptAppearanceToBackdrop() }
+        backdropAdaptItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+    }
+
+    /// 按面板背后内容的平均亮度切换外观：亮背景 → aqua（浅玻璃深字），
+    /// 暗背景 → darkAqua（深玻璃白字）。NSGlassEffectView 不会自动适配，
+    /// 语义文字色随外观自动反转；采样失败（如无屏幕录制权限）保持现状。
+    private func adaptAppearanceToBackdrop() {
+        guard ResultView.usesLiquidGlass else { return }
+        let primaryMaxY = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first)?.frame.maxY
+            ?? frame.maxY
+        let screenRect = ScreenCoordinates.topLeftFrame(fromCocoa: frame, primaryScreenMaxY: primaryMaxY)
+        let windowID = isVisible ? CGWindowID(windowNumber) : nil
+        guard let luminance = BackdropSampler.luminance(under: screenRect, belowWindowID: windowID) else { return }
+        let darkBackdrop = BackdropSampler.tone(forLuminance: luminance) == .dark
+        appearance = NSAppearance(named: darkBackdrop ? .darkAqua : .aqua)
     }
 
     override func orderOut(_ sender: Any?) {
@@ -103,6 +123,7 @@ final class SnapPanel: NSPanel {
             setFrame(frame, display: true, animate: false)
             isProgrammaticMove = false
         }
+        adaptAppearanceToBackdrop()
         orderFrontRegardless()
     }
 

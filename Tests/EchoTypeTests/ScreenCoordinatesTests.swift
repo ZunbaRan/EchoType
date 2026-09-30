@@ -26,4 +26,11 @@ struct ScreenCoordinatesTests {
         )
         #expect(result.origin.y == 0)
     }
+
+    @Test func topLeftFrameRoundTrip() {
+        let topLeft = CGRect(x: 120, y: 60, width: 200, height: 40)
+        let cocoa = ScreenCoordinates.cocoaFrame(fromTopLeft: topLeft, primaryScreenMaxY: 900)
+        let back = ScreenCoordinates.topLeftFrame(fromCocoa: cocoa, primaryScreenMaxY: 900)
+        #expect(back == topLeft)
+    }
 }

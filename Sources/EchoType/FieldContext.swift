@@ -125,4 +125,14 @@ enum ScreenCoordinates {
             height: rect.height
         )
     }
+
+    /// 反向换算：Cocoa 全局坐标 → 左上原点全局坐标（CGWindowList 截屏 API 使用）。
+    static func topLeftFrame(fromCocoa rect: CGRect, primaryScreenMaxY: CGFloat) -> CGRect {
+        CGRect(
+            x: rect.minX,
+            y: primaryScreenMaxY - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
 }

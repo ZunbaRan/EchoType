@@ -114,6 +114,10 @@ final class TranslationCoordinator {
         resultView.onCopy = { [weak self] text in
             self?.copyToPasteboard(text)
         }
+        // 流式揭示期间译文逐字增长，面板高度跟着自适应
+        resultView.onStreamReveal = { [weak self] in
+            self?.panel.resizeToFitContent()
+        }
 
         monitor.onFieldChanged = { [weak self] field in
             self?.handleFieldChange(field)

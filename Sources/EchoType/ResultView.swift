@@ -9,8 +9,18 @@ private final class PanelTextField: NSTextField {
 /// 悬浮窗内容：英文译文、复制按钮。
 final class ResultView: NSView {
     var onCopy: ((String) -> Void)?
+    /// 流式揭示期间每次刷新文字时回调（让面板随内容增长调整高度）。
+    var onStreamReveal: (() -> Void)?
 
     private var currentResult: TranslationResult?
+
+    // MARK: 流式逐字揭示
+    // 服务端 SSE chunk 粒度不一（一次可能吐几个词甚至整句），
+    // 这里缓冲目标文本、按固定节奏揭示，保证"逐字回显"的观感 + 流式光标。
+    private var streamTarget = ""
+    private var revealedCount = 0
+    private var revealTimer: Timer?
+    private static let streamCaret = "▍"
 
     private let kindLabel = EchoStyle.label("", size: 10.5, weight: .semibold, color: .systemTeal)
     private let translationField: NSTextField = {
@@ -172,6 +182,7 @@ final class ResultView: NSView {
 
     func setLoading(_ source: String) {
         currentResult = nil
+        stopStreaming()
         spinner.startAnimation(nil)
         spinner.isHidden = false
         kindLabel.stringValue = "翻译中"
@@ -184,12 +195,14 @@ final class ResultView: NSView {
     }
 
     func show(_ result: TranslationResult) {
+        stopStreaming()
         spinner.stopAnimation(nil)
         spinner.isHidden = true
         render(result)
     }
 
     func showError(_ message: String) {
+        stopStreaming()
         spinner.stopAnimation(nil)
         spinner.isHidden = true
         kindLabel.stringValue = "翻译失败"
@@ -227,14 +240,43 @@ final class ResultView: NSView {
         statusLabel.stringValue = "已自动复制到剪贴板"
     }
 
-    /// 流式输出：实时刷新译文（尚未完成时禁用复制）。
+    /// 流式输出：译文进缓冲区，由揭示定时器逐字显示（尚未完成时禁用复制）。
     func updatePartial(_ partial: String) {
         guard currentResult == nil else { return }
+        if partial.count < revealedCount { revealedCount = 0 } // 防御：目标文本变短
+        streamTarget = partial
         translationField.textColor = primaryTextColor
-        translationField.stringValue = partial
         copyButton.isEnabled = false
         statusLabel.stringValue = "生成中…"
         statusLabel.textColor = tertiaryTextColor
+        startRevealTimer()
+    }
+
+    private func startRevealTimer() {
+        guard revealTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.024, repeats: true) { [weak self] _ in
+            self?.revealTick()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        revealTimer = timer
+    }
+
+    private func revealTick() {
+        let target = streamTarget
+        if revealedCount < target.count {
+            // 积压越多每拍揭示越多（追赶），至少 1 字
+            let backlog = target.count - revealedCount
+            revealedCount = min(target.count, revealedCount + max(1, backlog / 6))
+        }
+        translationField.stringValue = String(target.prefix(revealedCount)) + Self.streamCaret
+        onStreamReveal?()
+    }
+
+    private func stopStreaming() {
+        revealTimer?.invalidate()
+        revealTimer = nil
+        streamTarget = ""
+        revealedCount = 0
     }
 
     @objc private func copyTranslation() {

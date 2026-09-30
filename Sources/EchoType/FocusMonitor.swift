@@ -86,9 +86,8 @@ final class FocusMonitor {
         currentField = field
         lastValue = field.value
         onFieldChanged?(field)
-        if field.containsCJK {
-            onTextChanged?(field)
-        }
+        // 注意：获得焦点时只记基线值、不立即翻译——悬浮窗只在用户
+        // 实际改变文本（输入/粘贴/删除）后才弹出，避免阅读文档误触。
     }
 
     /// 焦点丢失需连续两次轮询（约 0.8 秒）确认才上报，过滤点击悬浮窗等瞬态失焦。

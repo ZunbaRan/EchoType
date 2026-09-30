@@ -10,7 +10,12 @@ final class TriggerController {
 
     func textChanged(_ field: FieldContext) {
         guard AppSettings.shared.autoTranslate,
-              let segment = translatableSegment(of: field) else { return }
+              let segment = translatableSegment(of: field) else {
+            // 当前内容无可翻译段落（如被清空）：取消未触发的待翻译任务，
+            // 避免用户删完文字后旧任务仍弹出悬浮窗。
+            pending?.cancel()
+            return
+        }
         pending?.cancel()
         let item = DispatchWorkItem { [weak self] in
             self?.onTranslate?(segment, field)
