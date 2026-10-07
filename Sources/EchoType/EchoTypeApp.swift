@@ -109,16 +109,12 @@ final class TranslationCoordinator {
     private var requestGeneration = 0
 
     func start() {
-        resultView.translatesAutoresizingMaskIntoConstraints = false
+        // AppKit owns the content frame; text/layout must not resize the window.
+        resultView.autoresizingMask = [.width, .height]
         panel.contentView = resultView
         resultView.onCopy = { [weak self] text in
             self?.copyToPasteboard(text)
         }
-        // 流式揭示期间译文逐字增长，面板高度跟着自适应
-        resultView.onStreamReveal = { [weak self] in
-            self?.panel.resizeToFitContent()
-        }
-
         monitor.onFieldChanged = { [weak self] field in
             self?.handleFieldChange(field)
         }
@@ -141,8 +137,7 @@ final class TranslationCoordinator {
             self?.resultView.applySettings()
         }
 
-        // 玻璃路径下面板不为 key（液态渲染只占用 main 身份），keyDown 收不到 Esc；
-        // 用全局监听兜底——本应用持有辅助功能权限，全局监听正需要它。
+        // 交互结束后面板归还 key 身份，输入仍属于来源应用；用全局监听处理此时的 Esc。
         NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return } // Esc
             DispatchQueue.main.async {
@@ -164,9 +159,8 @@ final class TranslationCoordinator {
     }
 
     private var isUserInteractingWithPanel: Bool {
-        // 面板 canBecomeKey=false，只用鼠标悬停判断用户是否正在操作面板
         guard panel.isVisible else { return false }
-        return NSMouseInRect(NSEvent.mouseLocation, panel.frame, false)
+        return panel.inLiveResize || panel.isKeyWindow || NSMouseInRect(NSEvent.mouseLocation, panel.frame, false)
     }
 
     private func translate(_ text: String, field: FieldContext) {
@@ -198,7 +192,6 @@ final class TranslationCoordinator {
                     self.present(translated, field: field)
                 case .failure(let error):
                     self.resultView.showError(error.localizedDescription)
-                    self.panel.resizeToFitContent()
                 }
             }
         )
@@ -207,7 +200,6 @@ final class TranslationCoordinator {
     private func present(_ result: TranslationResult, field: FieldContext) {
         resultView.show(result)
         panel.show(near: field)
-        panel.resizeToFitContent()
         if AppSettings.shared.autoCopyTranslation {
             copyToPasteboard(result.translation)
             resultView.showAutoCopied()

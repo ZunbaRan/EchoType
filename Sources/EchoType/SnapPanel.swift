@@ -7,7 +7,7 @@ final class SnapPanel: NSPanel {
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: Self.preferredWidth, height: 180),
-            styleMask: [.borderless, .nonactivatingPanel, .utilityWindow],
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -15,6 +15,9 @@ final class SnapPanel: NSPanel {
         level = .floating
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
+        acceptsMouseMovedEvents = true
+        // Native edge/corner resizing with window-local hover hints.
+        minSize = NSSize(width: 260, height: 140)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -23,10 +26,9 @@ final class SnapPanel: NSPanel {
         if ResultView.usesLiquidGlass {
             appearance = NSAppearance(named: .aqua)
         }
-        titleVisibility = .hidden
-        titlebarAppearsTransparent = true
         worksWithSpaces(AppSettings.shared.showsOnAllSpaces)
         observeUserDrags()
+        observeResizeAndKey()
     }
 
     private func worksWithSpaces(_ allSpaces: Bool) {
@@ -35,9 +37,76 @@ final class SnapPanel: NSPanel {
             : [.fullScreenAuxiliary]
     }
 
-    // 永不成为 key window：液态渲染由 _hasActiveAppearance 覆盖提供（见下），
-    // 不需要真实窗口身份；面板不抢前台应用的键盘输入。
-    override var canBecomeKey: Bool { false }
+    // MARK: key 身份与系统边缘缩放
+    //
+    // 参考 Easydict ResultPanel 的已验证方案：系统的 .resizable 边缘缩放需要
+    // 窗口能持 key（canBecomeKey=false 时缩放拖拽不生效）。但常驻 key 会抢走
+    // 前台应用的键盘输入——所以点击/拖拽后让 key 自动归还，仅在缩放会话期间持有。
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    private var backdropAdaptItem: DispatchWorkItem?
+
+    private func observeResizeAndKey() {
+        let center = NotificationCenter.default
+        // 非缩放期间拿到 key（如点击面板）：归还键盘到前台应用；
+        // 但鼠标还按着（缩放拖拽刚开始、inLiveResize 尚未置位）时不能归还——
+        // 缩放跟踪需要 key 身份，所以等交互结束后再 resign。
+        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: self, queue: .main) { [weak self] _ in
+            self?.scheduleResignKey()
+        }
+        center.addObserver(
+            self, selector: #selector(liveResizeBegan),
+            name: NSWindow.willStartLiveResizeNotification, object: self
+        )
+        center.addObserver(
+            self, selector: #selector(liveResizeEnded),
+            name: NSWindow.didEndLiveResizeNotification, object: self
+        )
+        // 缩放中背景区域不断变化：防抖重采样明暗
+        center.addObserver(forName: NSWindow.didResizeNotification, object: self, queue: .main) { [weak self] _ in
+            self?.scheduleBackdropAdapt()
+        }
+        center.addObserver(forName: NSWindow.didChangeScreenNotification, object: self, queue: .main) { [weak self] _ in
+            self?.updateSizeLimits()
+        }
+    }
+
+    @objc private func liveResizeBegan() {
+        updateSizeLimits()
+        // Every resize edge counts as intentional placement, including edges that leave the origin unchanged.
+        userDragged = true
+    }
+
+    /// 缩放结束：持久化尺寸（之后每次显示沿用）、归还 key。
+    /// inLiveResize 用 NSWindow 自带属性，缩放跟踪期间由 AppKit 维护。
+    @objc private func liveResizeEnded() {
+        let size = frame.size
+        if size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 {
+            AppSettings.shared.panelSize = size
+        }
+        resignKey()
+    }
+
+    private func scheduleBackdropAdapt() {
+        backdropAdaptItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.adaptAppearanceToBackdrop() }
+        backdropAdaptItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+    }
+
+    /// 归还 key 身份：交互进行中（按住鼠标/缩放会话）稍候重试，交互结束后归还。
+    private func scheduleResignKey() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            guard let self, self.isKeyWindow else { return }
+            if self.inLiveResize || NSEvent.pressedMouseButtons != 0 {
+                self.scheduleResignKey()
+            } else {
+                self.resignKey()
+            }
+        }
+    }
 
     /// 液态玻璃把「活跃渲染」挂在窗口的私有查询 _hasActiveAppearance 上，
     /// 而不是公开的 isKeyWindow/isMainWindow（实验证明改后者无效）。
@@ -68,7 +137,6 @@ final class SnapPanel: NSPanel {
 
     private var userDragged = false
     private var isProgrammaticMove = false
-    private var backdropAdaptItem: DispatchWorkItem?
 
     /// 用户拖拽过之后，翻译时保持用户放置的位置，不再自动贴边；关闭悬浮窗后重置。
     private func observeUserDrags() {
@@ -79,13 +147,10 @@ final class SnapPanel: NSPanel {
     }
 
     @objc private func windowDidMoveUser() {
-        guard !isProgrammaticMove else { return }
+        guard isVisible, !isProgrammaticMove else { return }
         userDragged = true
-        // 拖到新背景上后重新判定明暗（防抖，拖动中不连续截图）。
-        backdropAdaptItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.adaptAppearanceToBackdrop() }
-        backdropAdaptItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+        // 拖到新背景上后重新判定明暗
+        scheduleBackdropAdapt()
     }
 
     /// 按面板背后内容的平均亮度切换外观：亮背景 → aqua（浅玻璃深字），
@@ -103,39 +168,59 @@ final class SnapPanel: NSPanel {
     }
 
     override func orderOut(_ sender: Any?) {
+        (contentView as? ResultView)?.clearResizeHint()
         super.orderOut(sender)
         userDragged = false // 关闭后重新唤出时恢复自动贴边
     }
 
-    // 面板 canBecomeKey=false，永远不进响应链：Esc 由
-    /// EchoTypeApp 的全局键盘监听关闭（TranslationCoordinator.installGlobalEscapeMonitor）。
+    // 面板可归还是 key（缩放需要），Esc 由全局键盘监听兜底关闭。
 
     func applySettings() {
         worksWithSpaces(AppSettings.shared.showsOnAllSpaces)
     }
 
-    /// 贴到指定输入框旁边显示；用户手动拖拽过则保持其放置的位置。
+    /// 按当前屏幕可视区钳制缩放范围（参考 Easydict：窗口换屏后也要可用）。
+    private func updateSizeLimits() {
+        guard let visible = (screen ?? NSScreen.main)?.visibleFrame else { return }
+        updateSizeLimits(in: visible)
+    }
+
+    private func updateSizeLimits(in visible: NSRect) {
+        minSize = NSSize(width: min(260, visible.width), height: min(140, visible.height))
+        maxSize = visible.size
+    }
+
+    /// 显示尺寸：用户存的尺寸优先，并钳制在可视区内（换到小屏不丢保存值，只是显示时收缩）。
+    private func restoredSize(in visible: NSRect) -> NSSize {
+        let saved = AppSettings.shared.panelSize
+        let minW = min(260, visible.width), minH = min(140, visible.height)
+        return NSSize(
+            width: min(visible.width, max(minW, saved?.width ?? Self.preferredWidth)),
+            height: min(visible.height, max(minH, saved?.height ?? 180))
+        )
+    }
+
+    /// 贴到指定输入框旁边显示；用户拖拽过的位置与缩放过的尺寸都保持沿用。
     func show(near field: FieldContext) {
+        // A completed request can arrive during AppKit's live-resize event tracking.
+        // Updating its text is safe; resetting its frame here would fight the user's drag.
+        guard !inLiveResize else { return }
+        let targetScreen = userDragged ? screen : NSScreen.screens.first { $0.frame.contains(field.cocoaFrame.origin) }
+        guard let visible = (targetScreen ?? NSScreen.main)?.visibleFrame else { return }
+        updateSizeLimits(in: visible)
         if !userDragged {
-            let size = NSSize(width: Self.preferredWidth, height: max(120, frame.height))
-            let frame = SnapPositionSolver.frame(preferredSize: size, near: field.cocoaFrame, edge: AppSettings.shared.snapEdge)
+            var frame = SnapPositionSolver.frame(
+                preferredSize: restoredSize(in: visible),
+                near: field.cocoaFrame, edge: AppSettings.shared.snapEdge, visibleFrame: visible
+            )
+            // The solver normally leaves an eight-point gap; a screen-sized panel needs the full area.
+            frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
             isProgrammaticMove = true
             setFrame(frame, display: true, animate: false)
             isProgrammaticMove = false
         }
         adaptAppearanceToBackdrop()
         orderFrontRegardless()
-    }
-
-    /// 内容高度变化后自适应（保持左上角不动）。
-    func resizeToFitContent() {
-        guard let content = contentView else { return }
-        let height = max(120, content.fittingSize.height)
-        var newFrame = frame
-        newFrame.origin.y = frame.maxY - height
-        newFrame.size.height = height
-        isProgrammaticMove = true
-        setFrame(newFrame, display: true, animate: false)
-        isProgrammaticMove = false
     }
 }

@@ -1,16 +1,42 @@
 import AppKit
 
-/// 拒绝成为第一响应者的文本标签：悬浮窗在 key/main 身份切换中
-/// 若让文本框持有焦点，会画出选中高亮/首响应者白底。
-private final class PanelTextField: NSTextField {
+/// 只读译文不成为第一响应者，滚动或拖动面板不会开始文本编辑。
+private final class PanelTextView: NSTextView {
     override var acceptsFirstResponder: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { true }
+}
+
+/// Window-local hints never intercept a native resize gesture or change keyboard focus.
+private final class PanelResizeHintView: NSView {
+    var edgeMask = 0 {
+        didSet { if oldValue != edgeMask { needsDisplay = true } }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard edgeMask != 0 else { return }
+        let width = bounds.width
+        let height = bounds.height
+        if edgeMask & 1 != 0 { drawHint("↔", in: NSRect(x: 1, y: height / 2 - 12, width: 16, height: 24)) }
+        if edgeMask & 2 != 0 { drawHint("↔", in: NSRect(x: width - 17, y: height / 2 - 12, width: 16, height: 24)) }
+        if edgeMask & 4 != 0 { drawHint("↕", in: NSRect(x: width / 2 - 12, y: height - 19, width: 24, height: 18)) }
+        if edgeMask & 8 != 0 { drawHint("↕", in: NSRect(x: width / 2 - 12, y: 1, width: 24, height: 18)) }
+    }
+
+    private func drawHint(_ direction: String, in rect: NSRect) {
+        NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .bold), .foregroundColor: NSColor.white]
+        let text = direction as NSString
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2), withAttributes: attributes)
+    }
 }
 
 /// 悬浮窗内容：英文译文、复制按钮。
 final class ResultView: NSView {
     var onCopy: ((String) -> Void)?
-    /// 流式揭示期间每次刷新文字时回调（让面板随内容增长调整高度）。
-    var onStreamReveal: (() -> Void)?
 
     private var currentResult: TranslationResult?
 
@@ -23,14 +49,36 @@ final class ResultView: NSView {
     private static let streamCaret = "▍"
 
     private let kindLabel = EchoStyle.label("", size: 10.5, weight: .semibold, color: .systemTeal)
-    private let translationField: NSTextField = {
-        let field = PanelTextField(labelWithString: "")
+    private let translationField: NSTextView = {
+        let field = PanelTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
         field.font = .systemFont(ofSize: 15)
         field.textColor = EchoStyle.textPrimary
         field.isEditable = false
+        field.isSelectable = false
+        field.isRichText = false
+        field.drawsBackground = false
         field.focusRingType = .none
-        field.translatesAutoresizingMaskIntoConstraints = false
+        field.isVerticallyResizable = true
+        field.isHorizontallyResizable = false
+        field.minSize = .zero
+        field.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        field.autoresizingMask = [.width]
+        field.textContainerInset = .zero
+        field.textContainer?.lineFragmentPadding = 0
+        field.textContainer?.containerSize = NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude)
+        field.textContainer?.widthTracksTextView = true
         return field
+    }()
+    private let translationScrollView: NSScrollView = {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.contentView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        return scrollView
     }()
     private let statusLabel = EchoStyle.label("", size: 10.5, color: EchoStyle.textTertiary, lines: 2)
     private let spinner: NSProgressIndicator = {
@@ -43,6 +91,11 @@ final class ResultView: NSView {
     }()
 
     private let card: NSView = ResultView.makeCard()
+    private let contents = NSView()
+    private let header = NSStackView()
+    private let footer = NSStackView()
+    private let resizeHints = PanelResizeHintView()
+    private var edgeTracking: NSTrackingArea?
 
     /// macOS 26+ 悬浮窗用 Liquid Glass；更低版本保持半透明圆角卡片。
     /// SnapPanel 据此决定是否覆盖全局 darkAqua 外观。
@@ -61,7 +114,6 @@ final class ResultView: NSView {
             let glass = NSGlassEffectView()
             glass.cornerRadius = 12
             glass.style = .clear
-            glass.translatesAutoresizingMaskIntoConstraints = false
             return glass
         }
         let view = NSView()
@@ -69,7 +121,6 @@ final class ResultView: NSView {
         view.layer?.cornerRadius = 12
         view.layer?.borderWidth = 0.5
         view.layer?.borderColor = EchoStyle.separator.cgColor
-        view.translatesAutoresizingMaskIntoConstraints = false
         return view
     }
 
@@ -86,12 +137,17 @@ final class ResultView: NSView {
 
     private func buildInterface() {
         addSubview(card)
-        card.pinEdges(to: self, insets: NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8))
-
-        translationField.lineBreakMode = .byWordWrapping
-        translationField.maximumNumberOfLines = 0
-        translationField.cell?.wraps = true
-        translationField.cell?.isScrollable = false
+        // No constraints connect the content to the window's frame. Its width and height belong to the user.
+        card.frame = bounds
+        card.autoresizingMask = [.width, .height]
+        contents.frame = card.bounds
+        contents.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *), let glass = card as? NSGlassEffectView {
+            glass.contentView = contents
+        } else {
+            card.addSubview(contents)
+        }
+        translationScrollView.documentView = translationField
 
         copyButton = EchoStyle.button("复制英文", symbol: "doc.on.doc", target: self, action: #selector(copyTranslation), primary: true)
         copyButton.isEnabled = false
@@ -104,39 +160,80 @@ final class ResultView: NSView {
         statusLabel.textColor = tertiaryTextColor
         translationField.textColor = primaryTextColor
 
-        let header = NSStackView(views: [kindLabel, pinButton, NSView(), spinner])
+        [kindLabel, pinButton!, NSView(), spinner].forEach { header.addArrangedSubview($0) }
         header.orientation = .horizontal
         header.alignment = .centerY
+        header.translatesAutoresizingMaskIntoConstraints = true
+        header.autoresizingMask = [.width, .minYMargin]
 
-        let footer = NSStackView(views: [copyButton, NSView(), statusLabel])
+        [copyButton!, NSView(), statusLabel].forEach { footer.addArrangedSubview($0) }
         footer.orientation = .horizontal
         footer.alignment = .centerY
-
-        let stack = NSStackView(views: [header, translationField, footer])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 18, bottom: 12, right: 18)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        if #available(macOS 26.0, *), let glass = card as? NSGlassEffectView {
-            // AppKit 会自动把 contentView 四边约束到玻璃视图边缘，无需再手动 pin；
-            // 玻璃高度随内容自适应，fittingSize 照常向上传播给 resizeToFitContent()。
-            glass.contentView = stack
-        } else {
-            card.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-                stack.topAnchor.constraint(equalTo: card.topAnchor),
-                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            ])
-        }
-        NSLayoutConstraint.activate([
-            stack.widthAnchor.constraint(equalToConstant: SnapPanel.preferredWidth - 16),
-            // 译文换行宽度 = 面板宽 - 容器左右边距(16) - 栈左右内边距(36)
-            translationField.widthAnchor.constraint(equalToConstant: SnapPanel.preferredWidth - 16 - 36),
-        ])
+        footer.translatesAutoresizingMaskIntoConstraints = true
+        footer.autoresizingMask = [.width, .maxYMargin]
+        translationScrollView.autoresizingMask = [.width, .height]
+        [header, translationScrollView, footer].forEach { contents.addSubview($0) }
+        contents.addSubview(resizeHints)
+        resizeHints.autoresizingMask = [.width, .height]
         spinner.isHidden = true
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        card.frame = bounds
+        contents.frame = card.bounds
+        let area = contents.bounds
+        resizeHints.frame = area
+        let width = max(0, area.width - 36)
+        header.frame = NSRect(x: 18, y: max(12, area.height - 36), width: width, height: 24)
+        footer.frame = NSRect(x: 18, y: 12, width: width, height: 28)
+        let textBottom = footer.frame.maxY + 8
+        translationScrollView.frame = NSRect(x: 18, y: textBottom, width: width, height: max(0, header.frame.minY - 8 - textBottom))
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        needsLayout = true
+    }
+
+    // Nonactivating panels still need edge hints while the input application keeps keyboard focus.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { updateTrackingAreas() }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let edgeTracking { removeTrackingArea(edgeTracking) }
+        let tracking = NSTrackingArea(rect: .zero, options: [.inVisibleRect, .activeAlways, .mouseMoved, .mouseEnteredAndExited], owner: self)
+        addTrackingArea(tracking)
+        edgeTracking = tracking
+    }
+
+    override func mouseEntered(with event: NSEvent) { updateResizeHint(with: event) }
+    override func mouseMoved(with event: NSEvent) { updateResizeHint(with: event) }
+    override func mouseExited(with event: NSEvent) {
+        clearResizeHint()
+    }
+
+    /// Clear only a hint owned by this view when the panel is hidden.
+    func clearResizeHint() {
+        resizeHints.edgeMask = 0
+    }
+
+    private func updateResizeHint(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let margin: CGFloat = 6
+        let left = bounds.contains(point) && point.x <= bounds.minX + margin
+        let right = bounds.contains(point) && point.x >= bounds.maxX - margin
+        let bottom = bounds.contains(point) && point.y <= bounds.minY + margin
+        let top = bounds.contains(point) && point.y >= bounds.maxY - margin
+        guard left || right || top || bottom else {
+            clearResizeHint()
+            return
+        }
+        resizeHints.edgeMask = (left ? 1 : (right ? 2 : 0)) | (top ? 4 : (bottom ? 8 : 0))
     }
 
     /// 玻璃雾化系数：把 0–1 的「背景不透明度」设置压缩到 0–0.15 的白色雾化强度。
@@ -188,7 +285,8 @@ final class ResultView: NSView {
         kindLabel.stringValue = "翻译中"
         translationField.font = .systemFont(ofSize: AppSettings.shared.panelFontSize, weight: .regular)
         translationField.textColor = secondaryTextColor
-        translationField.stringValue = source
+        translationField.string = source
+        translationField.scrollRangeToVisible(NSRange(location: 0, length: 0))
         clearTransientViews()
         statusLabel.stringValue = ""
         copyButton.isEnabled = false
@@ -222,7 +320,7 @@ final class ResultView: NSView {
         kindLabel.stringValue = "译文"
         translationField.font = .systemFont(ofSize: AppSettings.shared.panelFontSize, weight: .semibold)
         translationField.textColor = primaryTextColor
-        translationField.stringValue = result.translation
+        translationField.string = result.translation
         copyButton.isEnabled = true
     }
 
@@ -268,8 +366,7 @@ final class ResultView: NSView {
             let backlog = target.count - revealedCount
             revealedCount = min(target.count, revealedCount + max(1, backlog / 6))
         }
-        translationField.stringValue = String(target.prefix(revealedCount)) + Self.streamCaret
-        onStreamReveal?()
+        translationField.string = String(target.prefix(revealedCount)) + Self.streamCaret
     }
 
     private func stopStreaming() {

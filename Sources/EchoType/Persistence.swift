@@ -169,9 +169,29 @@ final class AppSettings {
         set { update(newValue, key: "autoCopyTranslation", current: autoCopyTranslation) }
     }
 
+    /// 用户拖拽调整过的悬浮窗尺寸（nil 使用固定默认尺寸，不按译文自动缩放）。
+    var panelSize: CGSize? {
+        get {
+            guard let raw = defaults.string(forKey: "panelSize") else { return nil }
+            let size = NSSizeFromString(raw)
+            return size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0 ? size : nil
+        }
+        set {
+            guard newValue != panelSize else { return }
+            if let newValue {
+                guard newValue.width.isFinite, newValue.height.isFinite, newValue.width > 0, newValue.height > 0 else { return }
+                defaults.set(NSStringFromSize(newValue), forKey: "panelSize")
+            } else {
+                defaults.removeObject(forKey: "panelSize")
+            }
+            changed()
+        }
+    }
+
     func reset() {
         ["translationBaseURL", "translationModel", "autoTranslate", "debounceInterval",
-         "panelFontSize", "backgroundOpacity", "snapEdge", "showsOnAllSpaces", "pinPanel", "autoCopyTranslation"].forEach(defaults.removeObject(forKey:))
+         "panelFontSize", "backgroundOpacity", "snapEdge", "showsOnAllSpaces", "pinPanel",
+         "autoCopyTranslation", "panelSize"].forEach(defaults.removeObject(forKey:))
         changed()
     }
 
