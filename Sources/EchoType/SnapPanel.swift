@@ -22,7 +22,7 @@ final class SnapPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         // 全局强制 darkAqua 是为设置/状态窗口的深色设计；
-        // 玻璃悬浮窗改用浅色外观，Liquid Glass 才呈亮色，语义文字色随 vibrancy 适配背景。
+        // 玻璃悬浮窗先用浅色外观，再由背景检测主动更新材质与文字颜色。
         if ResultView.usesLiquidGlass {
             appearance = NSAppearance(named: .aqua)
         }
@@ -47,6 +47,10 @@ final class SnapPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     private var backdropAdaptItem: DispatchWorkItem?
+    private var backdropRefreshTimer: Timer?
+    private var backdropCapture: Task<Void, Never>?
+    private var backdropGeneration = 0
+    private var backdropTone: BackdropTone?
 
     private func observeResizeAndKey() {
         let center = NotificationCenter.default
@@ -70,6 +74,7 @@ final class SnapPanel: NSPanel {
         }
         center.addObserver(forName: NSWindow.didChangeScreenNotification, object: self, queue: .main) { [weak self] _ in
             self?.updateSizeLimits()
+            self?.scheduleBackdropAdapt()
         }
     }
 
@@ -90,6 +95,7 @@ final class SnapPanel: NSPanel {
     }
 
     private func scheduleBackdropAdapt() {
+        backdropGeneration += 1
         backdropAdaptItem?.cancel()
         let item = DispatchWorkItem { [weak self] in self?.adaptAppearanceToBackdrop() }
         backdropAdaptItem = item
@@ -153,21 +159,60 @@ final class SnapPanel: NSPanel {
         scheduleBackdropAdapt()
     }
 
-    /// 按面板背后内容的平均亮度切换外观：亮背景 → aqua（浅玻璃深字），
-    /// 暗背景 → darkAqua（深玻璃白字）。NSGlassEffectView 不会自动适配，
-    /// 语义文字色随外观自动反转；采样失败（如无屏幕录制权限）保持现状。
-    private func adaptAppearanceToBackdrop() {
+    private func startBackdropUpdates() {
         guard ResultView.usesLiquidGlass else { return }
-        let primaryMaxY = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first)?.frame.maxY
-            ?? frame.maxY
-        let screenRect = ScreenCoordinates.topLeftFrame(fromCocoa: frame, primaryScreenMaxY: primaryMaxY)
-        let windowID = isVisible ? CGWindowID(windowNumber) : nil
-        guard let luminance = BackdropSampler.luminance(under: screenRect, belowWindowID: windowID) else { return }
-        let darkBackdrop = BackdropSampler.tone(forLuminance: luminance) == .dark
-        appearance = NSAppearance(named: darkBackdrop ? .darkAqua : .aqua)
+        if backdropRefreshTimer == nil {
+            let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+                self?.adaptAppearanceToBackdrop()
+            }
+            backdropRefreshTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        adaptAppearanceToBackdrop()
+    }
+
+    /// 背景变化时主动切换材质外观与文字对比度，不依赖 hover 或键窗口身份。
+    private func adaptAppearanceToBackdrop() {
+        guard #available(macOS 26.0, *), isVisible, backdropRefreshTimer != nil else { return }
+        // Never prompt from a timer, and never overlap captures during rapid reopenings.
+        guard CGPreflightScreenCaptureAccess() else {
+            applyBackdropTone(NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light)
+            return
+        }
+        guard backdropCapture == nil else { return }
+        let requestedFrame = frame
+        let generation = backdropGeneration
+        backdropCapture = Task { [weak self] in
+            guard let self else { return }
+            defer { self.backdropCapture = nil }
+            do {
+                guard let luminance = try await BackdropSampler.luminance(behindPanelFrame: requestedFrame) else { return }
+                try Task.checkCancellation()
+                guard self.isVisible, self.backdropRefreshTimer != nil,
+                      self.frame == requestedFrame, self.backdropGeneration == generation,
+                      CGPreflightScreenCaptureAccess() else { return }
+                self.applyBackdropTone(BackdropSampler.tone(forLuminance: luminance, previous: self.backdropTone))
+            } catch {
+                // Keep the last successful color on failed or cancelled captures.
+            }
+        }
+    }
+
+    private func applyBackdropTone(_ tone: BackdropTone) {
+        backdropTone = tone
+        let name: NSAppearance.Name = tone == .dark ? .darkAqua : .aqua
+        if appearance?.name != name { appearance = NSAppearance(named: name) }
+        (contentView as? ResultView)?.applyBackdropContrast(isDark: tone == .dark)
     }
 
     override func orderOut(_ sender: Any?) {
+        backdropRefreshTimer?.invalidate()
+        backdropRefreshTimer = nil
+        backdropAdaptItem?.cancel()
+        backdropAdaptItem = nil
+        backdropGeneration += 1
+        backdropCapture?.cancel()
+        backdropTone = nil
         (contentView as? ResultView)?.clearResizeHint()
         super.orderOut(sender)
         userDragged = false // 关闭后重新唤出时恢复自动贴边
@@ -220,7 +265,7 @@ final class SnapPanel: NSPanel {
             setFrame(frame, display: true, animate: false)
             isProgrammaticMove = false
         }
-        adaptAppearanceToBackdrop()
         orderFrontRegardless()
+        startBackdropUpdates()
     }
 }

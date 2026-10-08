@@ -263,9 +263,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private func makeAppearanceSettings() -> NSView {
         let font = NSSlider(value: settings.panelFontSize, minValue: 11, maxValue: 28, target: self, action: #selector(fontSizeChanged(_:)))
         font.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        let opacity = NSSlider(value: settings.backgroundOpacity, minValue: 0, maxValue: 1, target: self, action: #selector(opacityChanged(_:)))
-        opacity.isContinuous = true
-        opacity.widthAnchor.constraint(equalToConstant: 220).isActive = true
         let edge = NSPopUpButton()
         edge.addItems(withTitles: ["输入框下方", "输入框上方"])
         edge.selectItem(at: settings.snapEdge.rawValue)
@@ -276,18 +273,33 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         let pin = NSButton(checkboxWithTitle: "悬浮窗常驻", target: self, action: #selector(pinPanelChanged(_:)))
         pin.state = settings.pinPanel ? .on : .off
         pinCheckbox = pin
-        return form([
-            row("译文字号", control: font),
-            row("背景不透明度", detail: "最左为完全透明", control: opacity),
+        var rows = [row("译文字号", control: font)]
+        if !ResultView.usesLiquidGlass {
+            let opacity = NSSlider(value: settings.backgroundOpacity, minValue: 0, maxValue: 1, target: self, action: #selector(opacityChanged(_:)))
+            opacity.isContinuous = true
+            opacity.widthAnchor.constraint(equalToConstant: 220).isActive = true
+            rows.append(row("背景不透明度", detail: "最左为完全透明", control: opacity))
+        }
+        rows.append(contentsOf: [
             row("默认贴边位置", detail: "空间不足时会自动翻转", control: edge),
             row("跨桌面显示", control: spaces),
             row("悬浮窗常驻", detail: "关闭后焦点离开输入框即隐藏", control: pin),
             note("悬浮窗可拖动；按 Esc 关闭；译文流式实时显示；点击复制只会复制英文译文。"),
         ])
+        if ResultView.usesLiquidGlass {
+            let allowBackdrop = EchoStyle.button("允许背景明暗适配", target: self, action: #selector(requestBackdropPermission))
+            allowBackdrop.isEnabled = !CGPreflightScreenCaptureAccess()
+            rows.append(row("背景适配权限", control: allowBackdrop))
+            rows.append(note("玻璃背景与文字自动适应背后的明暗；需要屏幕录制授权，采样图像不会保存或发送。"))
+        }
+        return form(rows)
     }
 
     @objc private func fontSizeChanged(_ sender: NSSlider) { settings.panelFontSize = sender.doubleValue }
     @objc private func opacityChanged(_ sender: NSSlider) { settings.backgroundOpacity = sender.doubleValue }
+    @objc private func requestBackdropPermission() {
+        if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
+    }
     @objc private func edgeChanged(_ sender: NSPopUpButton) { settings.snapEdge = SnapEdge(rawValue: sender.indexOfSelectedItem) ?? .below }
     @objc private func spacesChanged(_ sender: NSButton) { settings.showsOnAllSpaces = sender.state == .on }
     @objc private func pinPanelChanged(_ sender: NSButton) { settings.pinPanel = sender.state == .on }

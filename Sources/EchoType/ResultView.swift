@@ -39,6 +39,9 @@ final class ResultView: NSView {
     var onCopy: ((String) -> Void)?
 
     private var currentResult: TranslationResult?
+    private var backdropIsDark: Bool?
+    private var isShowingSource = false
+    private var statusUsesAdaptiveColor = true
 
     // MARK: 流式逐字揭示
     // 服务端 SSE chunk 粒度不一（一次可能吐几个词甚至整句），
@@ -80,7 +83,7 @@ final class ResultView: NSView {
         scrollView.scrollerStyle = .overlay
         return scrollView
     }()
-    private let statusLabel = EchoStyle.label("", size: 10.5, color: EchoStyle.textTertiary, lines: 2)
+    private let statusLabel = EchoStyle.label("", size: 10.5, color: EchoStyle.textTertiary)
     private let spinner: NSProgressIndicator = {
         let indicator = NSProgressIndicator()
         indicator.style = .spinning
@@ -93,7 +96,6 @@ final class ResultView: NSView {
     private let card: NSView = ResultView.makeCard()
     private let contents = NSView()
     private let header = NSStackView()
-    private let footer = NSStackView()
     private let resizeHints = PanelResizeHintView()
     private var edgeTracking: NSTrackingArea?
 
@@ -112,13 +114,13 @@ final class ResultView: NSView {
     private static func makeCard() -> NSView {
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
-            glass.cornerRadius = 12
+            glass.cornerRadius = 18
             glass.style = .clear
             return glass
         }
         let view = NSView()
         view.wantsLayer = true
-        view.layer?.cornerRadius = 12
+        view.layer?.cornerRadius = 18
         view.layer?.borderWidth = 0.5
         view.layer?.borderColor = EchoStyle.separator.cgColor
         return view
@@ -149,7 +151,9 @@ final class ResultView: NSView {
         }
         translationScrollView.documentView = translationField
 
-        copyButton = EchoStyle.button("复制英文", symbol: "doc.on.doc", target: self, action: #selector(copyTranslation), primary: true)
+        copyButton = EchoStyle.iconButton("doc.on.doc", help: "复制英文译文", target: self, action: #selector(copyTranslation))
+        copyButton.setAccessibilityLabel("复制英文译文")
+        copyButton.contentTintColor = secondaryTextColor
         copyButton.isEnabled = false
 
         pinButton = EchoStyle.iconButton("pin.fill", help: "常驻：失去焦点时不自动隐藏", target: self, action: #selector(togglePin))
@@ -158,21 +162,19 @@ final class ResultView: NSView {
             pinButton.image = NSImage(systemSymbolName: "pin", accessibilityDescription: "常驻")
         }
         statusLabel.textColor = tertiaryTextColor
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         translationField.textColor = primaryTextColor
 
-        [kindLabel, pinButton!, NSView(), spinner].forEach { header.addArrangedSubview($0) }
+        [kindLabel, copyButton!, pinButton!, statusLabel, NSView(), spinner].forEach { header.addArrangedSubview($0) }
         header.orientation = .horizontal
         header.alignment = .centerY
+        header.spacing = 6
         header.translatesAutoresizingMaskIntoConstraints = true
         header.autoresizingMask = [.width, .minYMargin]
 
-        [copyButton!, NSView(), statusLabel].forEach { footer.addArrangedSubview($0) }
-        footer.orientation = .horizontal
-        footer.alignment = .centerY
-        footer.translatesAutoresizingMaskIntoConstraints = true
-        footer.autoresizingMask = [.width, .maxYMargin]
         translationScrollView.autoresizingMask = [.width, .height]
-        [header, translationScrollView, footer].forEach { contents.addSubview($0) }
+        [header, translationScrollView].forEach { contents.addSubview($0) }
         contents.addSubview(resizeHints)
         resizeHints.autoresizingMask = [.width, .height]
         spinner.isHidden = true
@@ -187,8 +189,7 @@ final class ResultView: NSView {
         resizeHints.frame = area
         let width = max(0, area.width - 36)
         header.frame = NSRect(x: 18, y: max(12, area.height - 36), width: width, height: 24)
-        footer.frame = NSRect(x: 18, y: 12, width: width, height: 28)
-        let textBottom = footer.frame.maxY + 8
+        let textBottom: CGFloat = 12
         translationScrollView.frame = NSRect(x: 18, y: textBottom, width: width, height: max(0, header.frame.minY - 8 - textBottom))
     }
 
@@ -236,30 +237,44 @@ final class ResultView: NSView {
         resizeHints.edgeMask = (left ? 1 : (right ? 2 : 0)) | (top ? 4 : (bottom ? 8 : 0))
     }
 
-    /// 玻璃雾化系数：把 0–1 的「背景不透明度」设置压缩到 0–0.15 的白色雾化强度。
-    /// 液态玻璃本体不加着色（参考 macOS 26 小组件的近中性透射），
-    /// 雾化层只作为滑块微调——系数过大会把玻璃糊成磨砂灰块。
-    private static let glassTintFactor = 0.15
+    /// Match easydict-lite's clear glass with a fixed, gently darkened tint.
+    private static let glassTintFactor = 0.12
 
-    /// 玻璃路径下，把「背景不透明度」设置映射为白色雾化层强度
-    /// （提高不透明度 = 更不透明，白色雾化保持亮色材质而不会退回灰块）。
+    /// Tint changes only the material; content stays opaque.
     static func glassTint(forOpacity opacity: Double, factor: Double) -> NSColor? {
         let strength = opacity * factor
         guard strength > 0.02 else { return nil }
-        return NSColor(calibratedWhite: 1, alpha: strength)
+        return NSColor.black.withAlphaComponent(strength)
     }
 
-    /// 玻璃路径下用语义色——靠材质 vibrancy 随背景明暗自动反转；
-    /// 旧卡片路径维持写死的亮色（卡片本身是深色的）。
-    private var primaryTextColor: NSColor { usesGlass ? .labelColor : EchoStyle.textPrimary }
-    private var secondaryTextColor: NSColor { usesGlass ? .secondaryLabelColor : EchoStyle.textSecondary }
-    private var tertiaryTextColor: NSColor { usesGlass ? .tertiaryLabelColor : EchoStyle.textTertiary }
+    private var primaryTextColor: NSColor {
+        guard usesGlass else { return EchoStyle.textPrimary }
+        guard let backdropIsDark else { return .labelColor }
+        return backdropIsDark ? .white : .black
+    }
+    private var secondaryTextColor: NSColor {
+        usesGlass ? primaryTextColor.withAlphaComponent(0.6) : EchoStyle.textSecondary
+    }
+    private var tertiaryTextColor: NSColor {
+        usesGlass ? primaryTextColor.withAlphaComponent(0.6) : EchoStyle.textTertiary
+    }
+
+    func applyBackdropContrast(isDark: Bool) {
+        guard usesGlass, backdropIsDark != isDark else { return }
+        backdropIsDark = isDark
+        translationField.textColor = isShowingSource ? secondaryTextColor : primaryTextColor
+        copyButton.contentTintColor = secondaryTextColor
+        pinButton.contentTintColor = secondaryTextColor
+        if statusUsesAdaptiveColor { statusLabel.textColor = tertiaryTextColor }
+        translationField.needsDisplay = true
+        contents.needsDisplay = true
+    }
 
     private func applyBackground() {
         let opacity = AppSettings.shared.backgroundOpacity
         if #available(macOS 26.0, *), let glass = card as? NSGlassEffectView {
             glass.style = .clear
-            glass.tintColor = Self.glassTint(forOpacity: opacity, factor: Self.glassTintFactor)
+            glass.tintColor = Self.glassTint(forOpacity: 1, factor: Self.glassTintFactor)
         } else {
             card.layer?.backgroundColor = EchoStyle.cardBackground.withAlphaComponent(opacity).cgColor
         }
@@ -278,6 +293,7 @@ final class ResultView: NSView {
     // MARK: 状态
 
     func setLoading(_ source: String) {
+        isShowingSource = true
         currentResult = nil
         stopStreaming()
         spinner.startAnimation(nil)
@@ -288,7 +304,6 @@ final class ResultView: NSView {
         translationField.string = source
         translationField.scrollRangeToVisible(NSRange(location: 0, length: 0))
         clearTransientViews()
-        statusLabel.stringValue = ""
         copyButton.isEnabled = false
     }
 
@@ -304,17 +319,24 @@ final class ResultView: NSView {
         spinner.stopAnimation(nil)
         spinner.isHidden = true
         kindLabel.stringValue = "翻译失败"
-        statusLabel.stringValue = message
-        statusLabel.textColor = .systemRed
+        setStatus(message, color: .systemRed)
         copyButton.isEnabled = false
     }
 
+    private func setStatus(_ text: String, color: NSColor, adaptive: Bool = false) {
+        statusUsesAdaptiveColor = adaptive
+        statusLabel.stringValue = text
+        statusLabel.textColor = color
+        // The compact toolbar truncates long messages; hovering still exposes the full text.
+        statusLabel.toolTip = text.isEmpty ? nil : text
+    }
+
     private func clearTransientViews() {
-        statusLabel.stringValue = ""
-        statusLabel.textColor = tertiaryTextColor
+        setStatus("", color: tertiaryTextColor, adaptive: true)
     }
 
     private func render(_ result: TranslationResult) {
+        isShowingSource = false
         currentResult = result
         clearTransientViews()
         kindLabel.stringValue = "译文"
@@ -334,19 +356,18 @@ final class ResultView: NSView {
 
     /// 翻译完成后自动复制成功的提示。
     func showAutoCopied() {
-        statusLabel.textColor = .systemGreen
-        statusLabel.stringValue = "已自动复制到剪贴板"
+        setStatus("已自动复制到剪贴板", color: .systemGreen)
     }
 
     /// 流式输出：译文进缓冲区，由揭示定时器逐字显示（尚未完成时禁用复制）。
     func updatePartial(_ partial: String) {
         guard currentResult == nil else { return }
+        isShowingSource = false
         if partial.count < revealedCount { revealedCount = 0 } // 防御：目标文本变短
         streamTarget = partial
         translationField.textColor = primaryTextColor
         copyButton.isEnabled = false
-        statusLabel.stringValue = "生成中…"
-        statusLabel.textColor = tertiaryTextColor
+        setStatus("生成中…", color: tertiaryTextColor, adaptive: true)
         startRevealTimer()
     }
 
@@ -379,7 +400,6 @@ final class ResultView: NSView {
     @objc private func copyTranslation() {
         guard let result = currentResult else { return }
         onCopy?(result.translation)
-        statusLabel.textColor = .systemGreen
-        statusLabel.stringValue = "已复制英文"
+        setStatus("已复制英文", color: .systemGreen)
     }
 }
